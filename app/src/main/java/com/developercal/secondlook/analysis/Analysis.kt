@@ -48,7 +48,8 @@ object ResultCategorizer {
             "Never share a password, one-time code, or recovery code with someone who contacts you.",
             "Do not transfer money or install remote-access software under pressure.",
             "Contact the organization using a number or website you find independently.",
-            "For an urgent family request, verify it through a separate communication channel."
+            "For an urgent family request, verify it through a separate communication channel.",
+            "If you suspect fraud, report it through an appropriate official channel in your region."
         ))
     }
 }
@@ -112,7 +113,10 @@ object UrlInspector {
         if (findings.isEmpty()) {
             findings += Finding("url_no_structure_flags", "No obvious structural warning signs found", "This only checks the address format. It does not open the site, verify its owner, or check its current reputation.", 0, FindingGroup.LINK)
         }
-        return ResultCategorizer.summarize(findings.distinctBy { it.id })
+        return ResultCategorizer.summarize(findings.distinctBy { it.id }).copy(recommendations = listOf(
+            "If you were not expecting this link, do not open it. Contact the organization through a website or number you find independently.",
+            "This check does not follow redirects, contact the site, or verify current reputation. A normal format is not proof a site is safe."
+        ))
     }
 }
 

@@ -275,7 +275,7 @@ private fun ResultScreen(kind: String, result: AnalysisResult?, historyEnabled: 
         }
         if (current.recommendations.isNotEmpty()) {
             Text("Safer next steps", style = MaterialTheme.typography.titleMedium)
-            current.recommendations.take(if (current.level == ResultLevel.NONE) 2 else 4).forEach { recommendation -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) { Icon(Icons.Outlined.CheckCircleOutline, null, tint = Navy, modifier = Modifier.size(19.dp)); Text(recommendation, modifier = Modifier.weight(1f), lineHeight = 21.sp) } }
+            current.recommendations.take(if (current.level == ResultLevel.NONE) 2 else 5).forEach { recommendation -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) { Icon(Icons.Outlined.CheckCircleOutline, null, tint = Navy, modifier = Modifier.size(19.dp)); Text(recommendation, modifier = Modifier.weight(1f), lineHeight = 21.sp) } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = { onCopy(summary) }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.ContentCopy, null); Spacer(Modifier.width(7.dp)); Text("Copy explanation") }

@@ -98,7 +98,7 @@ class AnalysisTest {
     @Test fun numericHostIsAWarningNotProof() {
         val r = UrlInspector.inspect("http://192.0.2.10/path")
         has(r, "url_ip_host")
-        assertTrue(r.findings.single().explanation.contains("not proof").not())
+        assertTrue(r.findings.single().explanation.contains("can be legitimate"))
     }
 
     @Test fun punycodeIsExplainedWithoutCallingItMalicious() { has(UrlInspector.inspect("https://xn--e1afmkfd.example/path"), "url_punycode") }

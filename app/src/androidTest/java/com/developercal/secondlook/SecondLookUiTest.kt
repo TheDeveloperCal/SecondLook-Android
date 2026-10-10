@@ -21,6 +21,7 @@ class SecondLookUiTest {
         compose.onNodeWithText("Message or email").assertIsDisplayed()
         compose.onNodeWithText("Message or email").performTextInput("Your account will be closed today. Act now. Send the verification code.")
         compose.onNodeWithText("Analyze on this device").performClick()
+        compose.onNodeWithText("Message check").assertIsDisplayed()
         compose.onNodeWithText("High-risk indicators found").assertIsDisplayed()
         compose.onNodeWithText("A code or credential is requested").assertIsDisplayed()
         compose.onNodeWithText("Share report").assertIsDisplayed()

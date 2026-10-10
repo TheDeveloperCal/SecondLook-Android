@@ -127,25 +127,29 @@ private fun SecondLookRoot() {
                 }
             }
         ) { padding ->
-            when (page) {
-                Page.HOME -> HomeScreen(onNavigate = { page = it }, onSample = { sample -> analyze("Example", MessageAnalyzer.analyze(sample)) }, historyEnabled = settings.historyEnabled, historyCount = history.size)
-                Page.MESSAGE -> MessageScreen(onAnalyze = { text -> analyze("Message", MessageAnalyzer.analyze(text)) })
-                Page.LINK -> LinkScreen(onAnalyze = { link -> analyze("Link", UrlInspector.inspect(link)) })
-                Page.CALL -> CallAssistantScreen(onAnalyze = { text -> analyze("Call notes", MessageAnalyzer.analyze(text)) })
-                Page.PROTECTION -> ProtectionScreen(settings = settings, entries = blocklist, refresh = { revision++ })
-                Page.SETTINGS -> SettingsScreen(settings = settings, historyCount = history.size, onOpenHistory = { page = Page.HISTORY }, onClearHistory = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } }, onChanged = { revision++ })
-                Page.HISTORY -> HistoryScreen(entries = history, onClear = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } })
-                Page.RESULT -> ResultScreen(kind = resultKind, result = result, historyEnabled = settings.historyEnabled, onSave = {
-                    val current = result ?: return@ResultScreen
-                    scope.launch(Dispatchers.IO) {
-                        app.database.dao().saveScan(SavedScan(kind = resultKind, level = current.level.name, report = reportText(resultKind, current)))
-                        withContext(Dispatchers.Main) { Toast.makeText(context, "Explanation saved on this device", Toast.LENGTH_SHORT).show(); revision++ }
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                key(page) {
+                    when (page) {
+                        Page.HOME -> HomeScreen(onNavigate = { page = it }, onSample = { sample -> analyze("Example", MessageAnalyzer.analyze(sample)) }, historyEnabled = settings.historyEnabled, historyCount = history.size)
+                        Page.MESSAGE -> MessageScreen(onAnalyze = { text -> analyze("Message", MessageAnalyzer.analyze(text)) })
+                        Page.LINK -> LinkScreen(onAnalyze = { link -> analyze("Link", UrlInspector.inspect(link)) })
+                        Page.CALL -> CallAssistantScreen(onAnalyze = { text -> analyze("Call notes", MessageAnalyzer.analyze(text)) })
+                        Page.PROTECTION -> ProtectionScreen(settings = settings, entries = blocklist, refresh = { revision++ })
+                        Page.SETTINGS -> SettingsScreen(settings = settings, historyCount = history.size, onOpenHistory = { page = Page.HISTORY }, onClearHistory = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } }, onChanged = { revision++ })
+                        Page.HISTORY -> HistoryScreen(entries = history, onClear = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } })
+                        Page.RESULT -> ResultScreen(kind = resultKind, result = result, historyEnabled = settings.historyEnabled, onSave = {
+                            val current = result ?: return@ResultScreen
+                            scope.launch(Dispatchers.IO) {
+                                app.database.dao().saveScan(SavedScan(kind = resultKind, level = current.level.name, report = reportText(resultKind, current)))
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Explanation saved on this device", Toast.LENGTH_SHORT).show(); revision++ }
+                            }
+                        }, onCopy = { value ->
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SecondLook explanation", value))
+                            Toast.makeText(context, "Explanation copied", Toast.LENGTH_SHORT).show()
+                        }, onShare = { value -> context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, value) }, "Share explanation")) })
                     }
-                }, onCopy = { value ->
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SecondLook explanation", value))
-                    Toast.makeText(context, "Explanation copied", Toast.LENGTH_SHORT).show()
-                }, onShare = { value -> context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, value) }, "Share explanation")) })
+                }
             }
         }
     }
@@ -206,11 +210,12 @@ private fun ActionCard(title: String, subtitle: String, icon: androidx.compose.u
 @Composable
 private fun MessageScreen(onAnalyze: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Text("Check a message", style = MaterialTheme.typography.titleLarge)
         Text("Paste a text, email, social message, or payment request. It stays on this device.", color = Muted, lineHeight = 21.sp)
         OutlinedTextField(value = text, onValueChange = { text = it.take(100_000) }, modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp), label = { Text("Message or email") }, placeholder = { Text("Paste or type the message here…") }, shape = RoundedCornerShape(16.dp), supportingText = { Text("${text.length} characters · English-focused checks") })
-        Button(onClick = { onAnalyze(text) }, enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Icon(Icons.Outlined.Search, null); Spacer(Modifier.width(9.dp)); Text("Analyze on this device") }
+        Button(onClick = { keyboard?.hide(); onAnalyze(text) }, enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Icon(Icons.Outlined.Search, null); Spacer(Modifier.width(9.dp)); Text("Analyze on this device") }
         Text("We look for specific patterns such as requests for codes, unusual payment methods, threats, and pressure. No spelling or grammar checks are used.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
     }
 }
@@ -218,11 +223,12 @@ private fun MessageScreen(onAnalyze: (String) -> Unit) {
 @Composable
 private fun LinkScreen(onAnalyze: (String) -> Unit) {
     var value by remember { mutableStateOf("") }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Text("Check a link", style = MaterialTheme.typography.titleLarge)
         Text("We inspect the address structure only. The link is never opened, fetched, or checked against a live list.", color = Muted, lineHeight = 21.sp)
         OutlinedTextField(value = value, onValueChange = { value = it.take(16_384) }, modifier = Modifier.fillMaxWidth(), label = { Text("Web address") }, placeholder = { Text("https://example.com/path") }, singleLine = true, shape = RoundedCornerShape(16.dp))
-        Button(onClick = { onAnalyze(value) }, enabled = value.isNotBlank(), modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Icon(Icons.Outlined.TravelExplore, null); Spacer(Modifier.width(9.dp)); Text("Inspect address") }
+        Button(onClick = { keyboard?.hide(); onAnalyze(value) }, enabled = value.isNotBlank(), modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Icon(Icons.Outlined.TravelExplore, null); Spacer(Modifier.width(9.dp)); Text("Inspect address") }
         InfoPanel("A normal-looking address is not proof that a website is legitimate. A shortened link hides its destination; an IP host or punycode can be legitimate too.")
     }
 }
@@ -236,6 +242,7 @@ private fun CallAssistantScreen(onAnalyze: (String) -> Unit) {
     var code by remember { mutableStateOf(false) }
     var remote by remember { mutableStateOf(false) }
     var payment by remember { mutableStateOf(false) }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Text("Talk through a call", style = MaterialTheme.typography.titleLarge)
         Text("Remember what happened? Describe the call; no recording or microphone is used.", color = Muted, lineHeight = 21.sp)
@@ -250,6 +257,7 @@ private fun CallAssistantScreen(onAnalyze: (String) -> Unit) {
         CheckRow("Ask you to install remote access", remote) { remote = it }
         Button(onClick = {
             val details = buildList { if (claim.isNotBlank()) add("This is $claim."); if (request.isNotBlank()) add(request.trim().trimEnd('.') + "."); if (immediate) add("They demanded that I act now."); if (threat) add("They threatened account closure or legal consequences."); if (code) add("They requested a verification code or password."); if (payment) add("They asked for an unexpected payment to resolve an account issue."); if (remote) add("They asked to install remote-access software.") }.joinToString(" ")
+            keyboard?.hide()
             onAnalyze(details)
         }, enabled = claim.isNotBlank() || request.isNotBlank() || immediate || threat || code || payment || remote, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Text("Review call details") }
     }

@@ -30,12 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import com.developercal.secondlook.analysis.*
 import com.developercal.secondlook.data.*
 import kotlinx.coroutines.Dispatchers
@@ -45,8 +47,6 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         setContent { SecondLookRoot() }
     }
 }
@@ -74,6 +74,21 @@ private fun SecondLookRoot() {
     val scope = rememberCoroutineScope()
     val dark = when (settings.theme) { "dark" -> true; "light" -> false; else -> androidx.compose.foundation.isSystemInDarkTheme() }
     val scheme = if (dark) darkColorScheme(primary = Color(0xFFFFBD68), background = Color(0xFF101923), surface = Color(0xFF182433), onSurface = Color(0xFFEAF0F5)) else lightColorScheme(primary = Navy, background = Canvas, surface = Color.White, onSurface = Ink, secondary = Amber)
+    SideEffect {
+        (context as? Activity)?.window?.let { window ->
+            val barColor = scheme.background.toArgb()
+            window.statusBarColor = barColor
+            window.navigationBarColor = barColor
+            if (Build.VERSION.SDK_INT >= 29) {
+                window.isStatusBarContrastEnforced = false
+                window.isNavigationBarContrastEnforced = false
+            }
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
 
     fun refresh() {
         scope.launch {

@@ -120,7 +120,13 @@ private fun SecondLookRoot() {
                 Page.PROTECTION -> ProtectionScreen(settings = settings, entries = blocklist, refresh = { revision++ })
                 Page.SETTINGS -> SettingsScreen(settings = settings, historyCount = history.size, onOpenHistory = { page = Page.HISTORY }, onClearHistory = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } }, onChanged = { revision++ })
                 Page.HISTORY -> HistoryScreen(entries = history, onClear = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } })
-                Page.RESULT -> ResultScreen(kind = resultKind, result = result, onCopy = { value ->
+                Page.RESULT -> ResultScreen(kind = resultKind, result = result, historyEnabled = settings.historyEnabled, onSave = {
+                    val current = result ?: return@ResultScreen
+                    scope.launch(Dispatchers.IO) {
+                        app.database.dao().saveScan(SavedScan(kind = resultKind, level = current.level.name, report = reportText(resultKind, current)))
+                        withContext(Dispatchers.Main) { Toast.makeText(context, "Explanation saved on this device", Toast.LENGTH_SHORT).show(); revision++ }
+                    }
+                }, onCopy = { value ->
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SecondLook explanation", value))
                     Toast.makeText(context, "Explanation copied", Toast.LENGTH_SHORT).show()
@@ -153,7 +159,7 @@ private fun HomeScreen(onNavigate: (Page) -> Unit, onSample: (String) -> Unit, h
         ActionCard("Check a link", "Inspect its address without opening it", Icons.Outlined.Link, "A format check cannot verify a site", onClick = { onNavigate(Page.LINK) })
         ActionCard("Talk through a call", "Review what the caller claimed or asked", Icons.Outlined.Call, "Caller ID can be spoofed", onClick = { onNavigate(Page.CALL) })
         ActionCard("Call protection", "Manage your local blocklist and options", Icons.Outlined.Shield, "Optional Android call-screening role", onClick = { onNavigate(Page.PROTECTION) })
-        if (historyEnabled) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        if (historyEnabled || historyCount > 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Recent checks", style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = { onNavigate(Page.HISTORY) }) { Text("See all · $historyCount") }
         }
@@ -240,7 +246,7 @@ private fun CheckRow(label: String, checked: Boolean, onChecked: (Boolean) -> Un
 }
 
 @Composable
-private fun ResultScreen(kind: String, result: AnalysisResult?, onCopy: (String) -> Unit, onShare: (String) -> Unit) {
+private fun ResultScreen(kind: String, result: AnalysisResult?, historyEnabled: Boolean, onSave: () -> Unit, onCopy: (String) -> Unit, onShare: (String) -> Unit) {
     val current = result ?: return
     val summary = reportText(kind, current)
     val (label, color, icon) = when (current.level) {
@@ -275,6 +281,7 @@ private fun ResultScreen(kind: String, result: AnalysisResult?, onCopy: (String)
             OutlinedButton(onClick = { onCopy(summary) }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.ContentCopy, null); Spacer(Modifier.width(7.dp)); Text("Copy explanation") }
             Button(onClick = { onShare(summary) }, modifier = Modifier.weight(1f)) { Icon(Icons.AutoMirrored.Outlined.Send, null); Spacer(Modifier.width(7.dp)); Text("Share report") }
         }
+        if (!historyEnabled) OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.BookmarkBorder, null); Spacer(Modifier.width(7.dp)); Text("Save this explanation on this device") }
         Text("This result is guidance, not a guarantee. The original message is not included when you share.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
     }
 }
@@ -357,7 +364,7 @@ private fun SettingsScreen(settings: LocalSettings, historyCount: Int, onOpenHis
             if (!checked) onClearHistory()
             onChanged()
         }
-        if (historyEnabled) {
+        if (historyEnabled || historyCount > 0) {
             OutlinedButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.History, null); Spacer(Modifier.width(7.dp)); Text("View saved results ($historyCount)") }
             TextButton(onClick = onClearHistory, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.DeleteOutline, null); Spacer(Modifier.width(6.dp)); Text("Clear history") }
         }

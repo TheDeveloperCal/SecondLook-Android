@@ -60,6 +60,7 @@ private val Ink = Color(0xFF1F2937)
 private val Muted = Color(0xFF637083)
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun SecondLookRoot() {
     val context = LocalContext.current
     val app = context.applicationContext as SecondLookApp

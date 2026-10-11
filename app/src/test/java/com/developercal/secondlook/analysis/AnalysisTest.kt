@@ -111,6 +111,8 @@ class AnalysisTest {
         assertEquals("+442079460000", CallDecisionEngine.normalize("+44 (20) 7946-0000"))
         assertEquals("+442079460000", CallDecisionEngine.normalize("+44 20 7946 0000"))
         assertNotEquals(CallDecisionEngine.normalize("+12025550123"), CallDecisionEngine.normalize("+442079460000"))
+        assertNull(CallDecisionEngine.normalize("+44 20 7946 0000 ext 2"))
+        assertNull(CallDecisionEngine.normalize("++442079460000"))
     }
 
     @Test fun exactUserBlocklistEntryIsBlocked() {
@@ -119,6 +121,16 @@ class AnalysisTest {
 
     @Test fun ordinaryUnknownNumberIsAllowed() {
         assertEquals(CallAction.ALLOW, CallDecisionEngine.decide("+12025550123", setOf("+442079460000"), false, CallSettings(true, true, true)))
+    }
+
+    @Test fun unverifiedConsumerReportsNeverBlockAnUnlistedCaller() {
+        assertEquals(CallAction.ALLOW, CallDecisionEngine.decide(
+            number = "+12025550123",
+            blocklist = emptySet(),
+            privateCaller = false,
+            settings = CallSettings(protectionEnabled = true, blocklistEnabled = true, privateNumbersEnabled = false),
+            unverifiedReportCount = 250
+        ))
     }
 
     @Test fun privateCallerSilencingIsOffByDefaultAndOptIn() {

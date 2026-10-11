@@ -1,14 +1,17 @@
 package com.developercal.secondlook
 
 import android.app.Activity
+import android.annotation.SuppressLint
 import android.app.role.RoleManager
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,13 +48,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private var sharedMessage by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SecondLookRoot() }
+        sharedMessage = readSharedMessage(intent)
+        setContent { SecondLookRoot(sharedMessage = sharedMessage) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        prefillSharedMessage(readSharedMessage(intent))
+    }
+
+    internal fun prefillSharedMessage(text: String?) { sharedMessage = text?.take(100_000)?.takeIf { it.isNotBlank() } }
+
+    private fun readSharedMessage(intent: Intent?): String? {
+        val mimeType = intent?.type?.substringBefore(';')?.trim()
+        if (intent?.action != Intent.ACTION_SEND || !mimeType.equals("text/plain", ignoreCase = true)) return null
+        return (intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString())
+            ?.take(100_000)
+            ?.takeIf { it.isNotBlank() }
     }
 }
 
-private enum class Page(val label: String) { HOME("Home"), MESSAGE("Message"), LINK("Link"), CALL("Call"), PROTECTION("Protection"), SETTINGS("Settings"), HISTORY("History"), RESULT("Result") }
+private enum class Page(val label: String) { HOME("Home"), MESSAGE("Message"), LINK("Link"), NUMBER("Number"), CALL("Call"), PROTECTION("Protection"), SETTINGS("Settings"), HISTORY("History"), RESULT("Result") }
 
 private val Navy = Color(0xFF14263D)
 private val Canvas = Color(0xFFF7F6F2)
@@ -61,7 +83,7 @@ private val Muted = Color(0xFF637083)
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun SecondLookRoot() {
+private fun SecondLookRoot(sharedMessage: String?) {
     val context = LocalContext.current
     val app = context.applicationContext as SecondLookApp
     val settings = app.settings
@@ -72,6 +94,7 @@ private fun SecondLookRoot() {
     var blocklist by remember { mutableStateOf(emptyList<BlockedNumber>()) }
     var revision by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(sharedMessage) { if (sharedMessage != null) page = Page.MESSAGE }
     val dark = when (settings.theme) { "dark" -> true; "light" -> false; else -> androidx.compose.foundation.isSystemInDarkTheme() }
     val scheme = if (dark) darkColorScheme(primary = Color(0xFFFFBD68), background = Color(0xFF101923), surface = Color(0xFF182433), onSurface = Color(0xFFEAF0F5)) else lightColorScheme(primary = Navy, background = Canvas, surface = Color.White, onSurface = Ink, secondary = Amber)
     SideEffect {
@@ -97,6 +120,8 @@ private fun SecondLookRoot() {
         }
     }
     LaunchedEffect(page, revision) { refresh() }
+    BackHandler(enabled = page == Page.HISTORY) { page = Page.SETTINGS }
+
     fun analyze(kind: String, analysis: AnalysisResult) {
         resultKind = kind
         result = analysis
@@ -115,8 +140,8 @@ private fun SecondLookRoot() {
                         Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(Navy), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.RemoveRedEye, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
                         Text("SecondLook", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     } },
-                    navigationIcon = { if (page == Page.RESULT || page == Page.HISTORY) IconButton(onClick = { page = Page.HOME }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
-                    actions = { Text("CHECK BEFORE YOU TRUST", fontSize = 9.sp, letterSpacing = 1.sp, color = Muted, modifier = Modifier.padding(end = 14.dp)) },
+                    navigationIcon = { if (page == Page.RESULT || page == Page.HISTORY) IconButton(onClick = { page = if (page == Page.HISTORY) Page.SETTINGS else Page.HOME }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
+                    actions = { Text("Check before you trust", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(end = 12.dp)) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
                 )
             },
@@ -130,9 +155,19 @@ private fun SecondLookRoot() {
             Box(Modifier.fillMaxSize().padding(padding)) {
                 key(page) {
                     when (page) {
-                        Page.HOME -> HomeScreen(onNavigate = { page = it }, onSample = { sample -> analyze("Example", MessageAnalyzer.analyze(sample)) }, historyEnabled = settings.historyEnabled, historyCount = history.size)
-                        Page.MESSAGE -> MessageScreen(onAnalyze = { text -> analyze("Message", MessageAnalyzer.analyze(text)) })
+                        Page.HOME -> HomeScreen(onNavigate = { page = it }, onNumberLookup = { page = Page.NUMBER }, onSample = { sample -> analyze("Example", MessageAnalyzer.analyze(sample)) }, historyEnabled = settings.historyEnabled, historyCount = history.size)
+                        Page.MESSAGE -> MessageScreen(initialText = sharedMessage.orEmpty(), onAnalyze = { text -> analyze("Message", MessageAnalyzer.analyze(text)) })
                         Page.LINK -> LinkScreen(onAnalyze = { link -> analyze("Link", UrlInspector.inspect(link)) })
+                        Page.NUMBER -> NumberLookupScreen(
+                            lookup = { raw -> withContext(Dispatchers.IO) {
+                                val local = IntelligenceCache(app.database.dao()).lookup(raw) ?: return@withContext null
+                                PhoneLookupState(local, app.database.dao().isBlocked(local.normalized))
+                            } },
+                            onManageBlocklist = { page = Page.PROTECTION },
+                            onRefresh = { withContext(Dispatchers.IO) { FtcReportUpdater(context).refresh() } },
+                            onDial = { number -> openPhoneAction(context, Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)), "Choose calling app") },
+                            onMessage = { number -> openPhoneAction(context, Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null)), "Choose messaging app") }
+                        )
                         Page.CALL -> CallAssistantScreen(onAnalyze = { text -> analyze("Call notes", MessageAnalyzer.analyze(text)) })
                         Page.PROTECTION -> ProtectionScreen(settings = settings, entries = blocklist, refresh = { revision++ })
                         Page.SETTINGS -> SettingsScreen(settings = settings, historyCount = history.size, onOpenHistory = { page = Page.HISTORY }, onClearHistory = { scope.launch(Dispatchers.IO) { app.database.dao().clearScans(); history = emptyList() } }, onChanged = { revision++ })
@@ -157,7 +192,7 @@ private fun SecondLookRoot() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(onNavigate: (Page) -> Unit, onSample: (String) -> Unit, historyEnabled: Boolean, historyCount: Int) {
+private fun HomeScreen(onNavigate: (Page) -> Unit, onNumberLookup: () -> Unit, onSample: (String) -> Unit, historyEnabled: Boolean, historyCount: Int) {
     val samples = listOf(
         "A delivery company says a package is held and asks you to pay a small fee using this link.",
         "Your bank account will be locked today. Reply with the one-time verification code to keep access.",
@@ -176,6 +211,7 @@ private fun HomeScreen(onNavigate: (Page) -> Unit, onSample: (String) -> Unit, h
         Text("What would you like to check?", style = MaterialTheme.typography.titleMedium)
         ActionCard("Check a message", "Texts, emails, payment requests", Icons.Outlined.Forum, "Start with the words they sent", onClick = { onNavigate(Page.MESSAGE) })
         ActionCard("Check a link", "Inspect its address without opening it", Icons.Outlined.Link, "A format check cannot verify a site", onClick = { onNavigate(Page.LINK) })
+        ActionCard("Check a phone number", "Look in the local report cache", Icons.Outlined.Search, "Reports are unverified; caller ID can be spoofed", onClick = onNumberLookup)
         ActionCard("Talk through a call", "Review what the caller claimed or asked", Icons.Outlined.Call, "Caller ID can be spoofed", onClick = { onNavigate(Page.CALL) })
         ActionCard("Call protection", "Manage your local blocklist and options", Icons.Outlined.Shield, "Optional Android call-screening role", onClick = { onNavigate(Page.PROTECTION) })
         if (historyEnabled || historyCount > 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -208,8 +244,8 @@ private fun ActionCard(title: String, subtitle: String, icon: androidx.compose.u
 }
 
 @Composable
-private fun MessageScreen(onAnalyze: (String) -> Unit) {
-    var text by remember { mutableStateOf("") }
+private fun MessageScreen(initialText: String, onAnalyze: (String) -> Unit) {
+    var text by remember(initialText) { mutableStateOf(initialText) }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Text("Check a message", style = MaterialTheme.typography.titleLarge)
@@ -230,6 +266,91 @@ private fun LinkScreen(onAnalyze: (String) -> Unit) {
         OutlinedTextField(value = value, onValueChange = { value = it.take(16_384) }, modifier = Modifier.fillMaxWidth(), label = { Text("Web address") }, placeholder = { Text("https://example.com/path") }, singleLine = true, shape = RoundedCornerShape(16.dp))
         Button(onClick = { keyboard?.hide(); onAnalyze(value) }, enabled = value.isNotBlank(), modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(15.dp)) { Icon(Icons.Outlined.TravelExplore, null); Spacer(Modifier.width(9.dp)); Text("Inspect address") }
         InfoPanel("A normal-looking address is not proof that a website is legitimate. A shortened link hides its destination; an IP host or punycode can be legitimate too.")
+    }
+}
+
+private data class PhoneLookupState(
+    val local: LocalIntelligenceLookup,
+    val isOnPersonalBlocklist: Boolean
+)
+
+@Composable
+private fun NumberLookupScreen(
+    lookup: suspend (String) -> PhoneLookupState?,
+    onManageBlocklist: () -> Unit,
+    onRefresh: suspend () -> String,
+    onDial: (String) -> Unit,
+    onMessage: (String) -> Unit
+) {
+    var input by remember { mutableStateOf("") }
+    var state by remember { mutableStateOf<PhoneLookupState?>(null) }
+    var invalid by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var refreshBusy by remember { mutableStateOf(false) }
+    var refreshMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Check a phone number", style = MaterialTheme.typography.titleLarge)
+        InfoPanel("Caller ID can be spoofed. A report about a displayed number does not prove who called or where they are.")
+        Text("This lookup checks your personal blocklist and the latest FTC public consumer reports cached on this device. When internet is available, SecondLook can download the public daily report file. Your checked number is never sent.", color = Muted, lineHeight = 21.sp)
+        OutlinedButton(enabled = !refreshBusy, onClick = {
+            scope.launch {
+                refreshBusy = true
+                refreshMessage = null
+                refreshMessage = onRefresh()
+                if (input.isNotBlank()) { state = lookup(input); invalid = state == null }
+                refreshBusy = false
+            }
+        }, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text(if (refreshBusy) "Updating public reports…" else "Update public reports") }
+        refreshMessage?.let { Text(it, color = Muted, lineHeight = 19.sp) }
+        OutlinedTextField(input, { input = it.take(64) }, modifier = Modifier.fillMaxWidth(), label = { Text("Phone number") }, placeholder = { Text("Include country code when known") }, singleLine = true, shape = RoundedCornerShape(14.dp))
+        Button(enabled = input.isNotBlank() && !busy, onClick = {
+            scope.launch {
+                busy = true
+                val found = lookup(input)
+                invalid = found == null
+                state = found
+                busy = false
+                keyboard?.hide()
+            }
+        }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(if (busy) "Checking on this device…" else "Look up locally") }
+        if (invalid) InfoPanel("Enter a valid number containing 7–15 digits. Add a country code when you know it.")
+        state?.let { found ->
+            Text("Lookup for ${found.local.normalized}", style = MaterialTheme.typography.titleMedium)
+            if (found.isOnPersonalBlocklist) InfoPanel("This number is on your personal blocklist. Blocking still depends on the Android screening role and your call-rule settings.")
+            else Text("This number is not on your personal blocklist.", color = Muted)
+            val snapshot = found.local.snapshot
+            if (snapshot == null) {
+                EmptyState("No source snapshot is cached", "SecondLook has not downloaded the public FTC report file yet. This lookup uses your personal blocklist only. No result here verifies a number.", Icons.Outlined.CloudOff)
+            } else {
+                val age = (System.currentTimeMillis() - snapshot.retrievedAt).coerceAtLeast(0L)
+                val freshness = if (age <= 7L * 24 * 60 * 60 * 1000) "Cached snapshot · ${formatAge(snapshot.retrievedAt)}" else "Out-of-date snapshot · ${formatAge(snapshot.retrievedAt)}"
+                Text("${snapshot.sourceName} · $freshness", fontWeight = FontWeight.SemiBold)
+                Text("${snapshot.recordCount} unique numbers in the most recent downloaded daily file; ${snapshot.ignoredRows} rows without a usable number omitted.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
+                Text("${snapshot.evidenceLabel}. This data is not verified by the source. It cannot identify the actual caller because caller ID can be spoofed.", color = Muted, lineHeight = 20.sp)
+                val reported = found.local.reportedNumber
+                if (reported == null) InfoPanel("No report for this number appears in this local daily file. That is not proof the number is safe.")
+                else InfoPanel("${reported.reportCount} unverified consumer report${if (reported.reportCount == 1) "" else "s"} in this daily file. Reports are not confirmed findings and never automatically block calls.")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onDial(found.local.normalized) }, modifier = Modifier.weight(1f)) { Text("Choose calling app") }
+                OutlinedButton(onClick = { onMessage(found.local.normalized) }, modifier = Modifier.weight(1f)) { Text("Choose messaging app") }
+            }
+            Text("These actions open an app with the number filled in. Review it there; SecondLook does not place a call or send a message.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
+            OutlinedButton(onClick = onManageBlocklist, modifier = Modifier.fillMaxWidth()) { Text("Manage personal blocklist") }
+        }
+        Text("Source: FTC Do Not Call reported-calls data. These are unverified reports, not confirmed scam findings. No reports are bundled or used to block calls.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
+    }
+}
+
+private fun formatAge(timestamp: Long): String = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(timestamp))
+
+private fun openPhoneAction(context: Context, intent: Intent, chooserTitle: String) {
+    try {
+        context.startActivity(Intent.createChooser(intent, chooserTitle))
+    } catch (_: Exception) {
+        Toast.makeText(context, "No compatible app is available", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -265,7 +386,7 @@ private fun CallAssistantScreen(onAnalyze: (String) -> Unit) {
 
 @Composable
 private fun CheckRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, onCheckedChange = onChecked); Text(label, modifier = Modifier.weight(1f)) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, onCheckedChange = onChecked, modifier = Modifier.semantics { contentDescription = label }); Text(label, modifier = Modifier.weight(1f)) }
 }
 
 @Composable
@@ -310,6 +431,7 @@ private fun ResultScreen(kind: String, result: AnalysisResult?, historyEnabled: 
 }
 
 @Composable
+@SuppressLint("NewApi")
 private fun ProtectionScreen(settings: LocalSettings, entries: List<BlockedNumber>, refresh: () -> Unit) {
     val context = LocalContext.current
     var enabled by remember { mutableStateOf(settings.protectionEnabled) }
@@ -329,13 +451,21 @@ private fun ProtectionScreen(settings: LocalSettings, entries: List<BlockedNumbe
     }
     val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { updateRole() }
     LaunchedEffect(Unit) { updateRole() }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) updateRole()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Call protection", style = MaterialTheme.typography.titleLarge)
-        Text("SecondLook only screens calls when Android grants its call-screening role. It does not check unknown numbers against a reputation database.", color = Muted, lineHeight = 21.sp)
+        Text("SecondLook applies local rules only to calls Android sends to its screening service. Some contact and VoIP calls may not be delivered to it. Unknown numbers are allowed.", color = Muted, lineHeight = 21.sp)
         Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.fillMaxWidth().padding(17.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.Shield, null, tint = Navy); Text(if (roleHeld) "Android screening role is active" else "Android screening role is not active", fontWeight = FontWeight.SemiBold) }
-        Text(when { !roleAvailable -> "Role-based call screening requires Android 10 or newer."; roleHeld -> "Configured rules run locally. Unknown numbers are allowed."; else -> "Choose SecondLook in Android's official role prompt to enable screening." }, color = Muted, lineHeight = 21.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.Shield, null, tint = Navy); Text(if (roleHeld) "Selected for Android call screening" else "Not selected for Android call screening", fontWeight = FontWeight.SemiBold) }
+                Text(when { !roleAvailable -> "Role-based call screening requires Android 10 or newer."; roleHeld -> "The OS role is granted. This does not prove a call was delivered to the service. Local rules allow unlisted numbers."; else -> "Choose SecondLook in Android's official role prompt to enable screening." }, color = Muted, lineHeight = 21.sp)
                 Text("Android may not pass calls from saved contacts to screening apps. SecondLook does not read your contacts.", color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
                 if (roleAvailable && !roleHeld) Button(onClick = {
                     try {
@@ -371,11 +501,12 @@ private fun ProtectionScreen(settings: LocalSettings, entries: List<BlockedNumbe
 
 @Composable
 private fun SettingsScreen(settings: LocalSettings, historyCount: Int, onOpenHistory: () -> Unit, onClearHistory: () -> Unit, onChanged: () -> Unit) {
+    val context = LocalContext.current
     var historyEnabled by remember { mutableStateOf(settings.historyEnabled) }
     var theme by remember { mutableStateOf(settings.theme) }
     Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Text("Settings & privacy", style = MaterialTheme.typography.titleLarge)
-        InfoPanel("Manual checks happen locally. SecondLook has no account, ads, analytics, or network permission. Your blocklist stays on this device.")
+        InfoPanel("Message and link checks happen locally and are never uploaded. When you choose to update report data, SecondLook downloads the public FTC report file; it does not send your number lookups, messages, or call history. No account, ads, or analytics.")
         Text("Appearance", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (value, label) -> FilterChip(selected = theme == value, onClick = { theme = value; settings.theme = value; onChanged() }, label = { Text(label) }) }
@@ -391,6 +522,18 @@ private fun SettingsScreen(settings: LocalSettings, historyCount: Int, onOpenHis
             OutlinedButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.History, null); Spacer(Modifier.width(7.dp)); Text("View saved results ($historyCount)") }
             TextButton(onClick = onClearHistory, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.DeleteOutline, null); Spacer(Modifier.width(6.dp)); Text("Clear history") }
         }
+        Text("Support", style = MaterialTheme.typography.titleMedium)
+        Text("Donations help maintain SecondLook as a free, open-source project.", color = Muted, lineHeight = 21.sp)
+        OutlinedButton(
+            onClick = {
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SupportLinks.LIBERAPAY_URL)))
+                } catch (_: Exception) {
+                    Toast.makeText(context, "No browser is available to open Liberapay", Toast.LENGTH_LONG).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Support SecondLook on Liberapay") }
         Text("About checks", style = MaterialTheme.typography.titleMedium)
         Text("The initial rules focus on English. They cannot verify identities, know about newly reported scams, or confirm a website's reputation. A result with no obvious warning signs is not a safety guarantee.", color = Muted, lineHeight = 21.sp)
     }
@@ -413,7 +556,7 @@ private fun HistoryScreen(entries: List<SavedScan>, onClear: () -> Unit) {
 private fun SettingSwitch(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 70.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) { Text(title, fontWeight = FontWeight.Medium); Text(description, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
-        Switch(checked, onCheckedChange = onChange)
+        Switch(checked, onCheckedChange = onChange, modifier = Modifier.semantics { contentDescription = "$title. $description" })
     }
 }
 

@@ -128,18 +128,30 @@ object CallDecisionEngine {
         if (number.isNullOrBlank()) return null
         val trimmed = number.trim()
         if (trimmed.equals("private", true) || trimmed.equals("unknown", true) || trimmed.equals("withheld", true) || trimmed.equals("restricted", true)) return null
-        val plus = trimmed.startsWith('+')
-        val digits = trimmed.filter(Char::isDigit)
+        val compact = buildString(trimmed.length) {
+            trimmed.forEach { char ->
+                when {
+                    char.isDigit() -> append(char)
+                    char == '+' && isEmpty() -> append(char)
+                    char.isWhitespace() || char in "().-" -> Unit
+                    else -> return null
+                }
+            }
+        }
+        val plus = compact.startsWith('+')
+        val digits = compact.removePrefix("+")
         if (digits.length !in 7..15) return null
         return (if (plus) "+" else "") + digits
     }
 
-    fun decide(number: String?, blocklist: Set<String>, privateCaller: Boolean, settings: CallSettings, failed: Boolean = false): CallAction {
+    @Suppress("UNUSED_PARAMETER") // Kept explicit at the policy boundary: consumer-report counts never affect the action.
+    fun decide(number: String?, blocklist: Set<String>, privateCaller: Boolean, settings: CallSettings, failed: Boolean = false, unverifiedReportCount: Int = 0): CallAction {
         if (failed || !settings.protectionEnabled) return CallAction.ALLOW
         if (privateCaller || isPrivateLabel(number.orEmpty())) return if (settings.privateNumbersEnabled) CallAction.SILENCE else CallAction.ALLOW
         val normalized = normalize(number) ?: return if (settings.privateNumbersEnabled && isPrivateLabel(number.orEmpty())) CallAction.SILENCE else CallAction.ALLOW
         val normalizedList = blocklist.mapNotNull(::normalize).toSet()
         if (settings.blocklistEnabled && normalized in normalizedList) return CallAction.BLOCK
+        // Public complaint counts are not verified identity or intent; they never cause an automatic block.
         return CallAction.ALLOW
     }
 

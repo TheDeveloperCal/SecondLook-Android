@@ -44,7 +44,7 @@ SECONDLOOK_SIGNING_PROPERTIES=/secure/path/secondlook-signing.properties ./gradl
 
 ## Download and install
 
-When a public release is available, download the signed APK from the project’s GitHub Releases page and verify the published SHA-256 checksum before installing. Android 8.0 or newer is required. Open the downloaded APK on the device and follow Android’s package-installer prompts. The `1.0.0-rc.1` candidate is currently built locally and has not yet been published online.
+Download the signed APK from the [GitHub Releases page](https://github.com/TheDeveloperCal/SecondLook-Android/releases) and verify the published SHA-256 checksum before installing. Android 8.0 (API 26) or newer is required. Open the downloaded APK on the device and follow Android’s package-installer prompts. This `1.0.0-rc.1` prerelease has not been physically verified with a genuine incoming call; Android’s call-screening role must be enabled by the user.
 
 Install the debug APK on a connected, designated test device with:
 
